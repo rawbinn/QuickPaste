@@ -2,41 +2,36 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\PasteRequest;
+use App\Models\Enums\ExpiryType;
 use App\Models\Paste;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\View\View;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
-use App\Models\Enums\ExpiryType;
-use Illuminate\Validation\Rule;
 
 class PasteController extends Controller
 {
-    public function createForm()
+    public function createForm(): View
     {
         return view('paste.create');
     }
 
-    public function store(Request $request)
+    public function store(PasteRequest $request)
     {
-        $request->validate([
-            'content' => 'required|string',
-            'expiry' => ['required', Rule::in(ExpiryType::values())],
-            'password' => 'nullable|string|max:255',
-            'language' => 'nullable|string|max:50',
-        ]);
-
-        $expiryEnum = ExpiryType::from((int) $request->expiry);
+        $validated = $request->validated();
+        $expiryEnum = ExpiryType::from((int) $validated['expiry']);
         $code = $this->generateUniqueCode();
         $expiresAt = $this->calculateExpiry($expiryEnum);
 
         $paste = Paste::create([
             'code' => $code,
-            'content' => $request->input('content'),
-            'password' => $request->filled('password') ? Hash::make($request->input('password')) : null,
+            'content' => $validated['content'],
+            'password' => $validated['password'] ? Hash::make($validated['password']) : null,
             'expiry_type' => $expiryEnum,
             'expires_at' => $expiresAt,
-            'language' => $request->input('language'),
+            'language' => $validated['language'],
         ]);
 
         return redirect()->route('paste.show', $code);
@@ -53,12 +48,14 @@ class PasteController extends Controller
         // Time-based expiry
         if ($paste->expires_at && now()->greaterThan($paste->expires_at)) {
             $paste->delete();
+
             return view('paste.show', ['error' => 'This paste has expired.']);
         }
 
         // One-time view expiry
-        if ($paste->expiry_type === \App\Models\Enums\ExpiryType::AFTER_VIEW) {
+        if ($paste->expiry_type === ExpiryType::AFTER_VIEW) {
             $paste->delete();
+
             return view('paste.show', ['paste' => $paste, 'qrCode' => $this->generateQRCode($code), 'language' => $paste->language]);
         }
 
@@ -82,7 +79,7 @@ class PasteController extends Controller
         ]);
     }
 
-    private function generateUniqueCode($length = 6)
+    private function generateUniqueCode($length = 6): string
     {
         do {
             $code = Str::random($length);
@@ -94,12 +91,14 @@ class PasteController extends Controller
     private function calculateExpiry(ExpiryType $expiry): ?\DateTime
     {
         $interval = $expiry->toInterval();
+
         return $interval ? now()->add($interval) : null;
     }
 
     private function generateQRCode($code)
     {
         $url = url("/$code");
+
         return QrCode::size(200)->generate($url);
     }
 }
