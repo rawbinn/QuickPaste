@@ -47,7 +47,7 @@ class PasteService
         $paste->increment('views');
 
         return [
-            'qrCode' => $this->generateQRCode($paste),
+            'qrCode' => $this->generateQRCode($paste->code),
         ];
     }
 
