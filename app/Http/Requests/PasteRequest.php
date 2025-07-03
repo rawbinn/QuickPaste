@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests;
 
 use App\Models\Enums\ExpiryType;
@@ -26,7 +28,7 @@ class PasteRequest extends FormRequest
         return [
             'content' => ['required', 'string'],
             'expiry' => ['required', Rule::in(ExpiryType::values())],
-            'password' => ['nullable', 'string', 'min:8', 'max:32'],
+            'password' => ['nullable', 'string', 'min:6', 'max:32'],
             'language' => ['nullable', 'string', 'max:50'],
         ];
     }

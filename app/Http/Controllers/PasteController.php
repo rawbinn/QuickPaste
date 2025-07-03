@@ -1,104 +1,88 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use App\Http\Requests\PasteRequest;
 use App\Models\Enums\ExpiryType;
 use App\Models\Paste;
+use App\Services\PasteService;
+use Exception;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\View\View;
-use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class PasteController extends Controller
 {
+    public function __construct(
+        private PasteService $pasteService
+    ) {}
+
     public function createForm(): View
     {
-        return view('paste.create');
+        return view('paste.create', [
+            'expiryTypes' => ExpiryType::labels(),
+        ]);
     }
 
-    public function store(PasteRequest $request)
+    public function store(PasteRequest $request): RedirectResponse
     {
         $validated = $request->validated();
-        $expiryEnum = ExpiryType::from((int) $validated['expiry']);
-        $code = $this->generateUniqueCode();
-        $expiresAt = $this->calculateExpiry($expiryEnum);
+        $paste = $this->pasteService->store($validated);
 
-        $paste = Paste::create([
-            'code' => $code,
-            'content' => $validated['content'],
-            'password' => $validated['password'] ? Hash::make($validated['password']) : null,
-            'expiry_type' => $expiryEnum,
-            'expires_at' => $expiresAt,
-            'language' => $validated['language'],
-        ]);
-
-        return redirect()->route('paste.show', $code);
+        return redirect()->route('paste.show', $paste->code);
     }
 
-    public function show(Request $request, $code)
+    public function show(Request $request, Paste $code): View|RedirectResponse
     {
-        $paste = Paste::where('code', $code)->first();
+        $key = 'paste-password:' . $code->id . ':' . $request->ip();
 
-        if (!$paste) {
-            return view('paste.show', ['error' => 'Paste not found.']);
-        }
+        try {
+            // If password is required
+            if ($code->password) {
 
-        // Time-based expiry
-        if ($paste->expires_at && now()->greaterThan($paste->expires_at)) {
-            $paste->delete();
-
-            return view('paste.show', ['error' => 'This paste has expired.']);
-        }
-
-        // One-time view expiry
-        if ($paste->expiry_type === ExpiryType::AFTER_VIEW) {
-            $paste->delete();
-
-            return view('paste.show', ['paste' => $paste, 'qrCode' => $this->generateQRCode($code), 'language' => $paste->language]);
-        }
-
-        // Password protection
-        if ($paste->password) {
-            if ($request->isMethod('post')) {
-                if (!Hash::check($request->input('password'), $paste->password)) {
-                    return view('paste.show', ['requiresPassword' => true, 'error' => 'Incorrect password.']);
+                // If not POST, show password form
+                if (! $request->isMethod('post')) {
+                    return view('paste.show', ['requiresPassword' => true]);
                 }
-            } else {
-                return view('paste.show', ['requiresPassword' => true]);
+
+                // Check rate limit before validating password
+                if (RateLimiter::tooManyAttempts($key, 5)) {
+                    $seconds = RateLimiter::availableIn($key);
+
+                    return redirect()
+                        ->route('paste.show', $code->code)
+                        ->withErrors([
+                            'password' => "Too many attempts. Try again in {$seconds} seconds.",
+                        ]);
+                }
+
+                // Password check
+                if (! Hash::check($request->input('password'), $code->password)) {
+                    RateLimiter::hit($key, 300); // lockout for 5 mins (300 seconds)
+
+                    return redirect()
+                        ->route('paste.show', $code->code)
+                        ->withErrors(['password' => 'Invalid password provided.']);
+                }
+
+                // Password correct → clear attempts
+                RateLimiter::clear($key);
             }
+
+            $data = $this->pasteService->handleView($code);
+
+            return view('paste.show', [
+                'paste' => $code,
+                'qrCode' => $data['qrCode'] ?? null,
+                'language' => $code->language,
+                'requiresPassword' => false,
+            ]);
+        } catch (Exception $e) {
+            return view('paste.show', ['error' => 'An error occurred: ' . $e->getMessage()]);
         }
-
-        $paste->increment('views');
-
-        return view('paste.show', [
-            'paste' => $paste,
-            'qrCode' => $this->generateQRCode($code),
-            'language' => $paste->language,
-        ]);
-    }
-
-    private function generateUniqueCode($length = 6): string
-    {
-        do {
-            $code = Str::random($length);
-        } while (Paste::where('code', $code)->exists());
-
-        return $code;
-    }
-
-    private function calculateExpiry(ExpiryType $expiry): ?\DateTime
-    {
-        $interval = $expiry->toInterval();
-
-        return $interval ? now()->add($interval) : null;
-    }
-
-    private function generateQRCode($code)
-    {
-        $url = url("/$code");
-
-        return QrCode::size(200)->generate($url);
     }
 }

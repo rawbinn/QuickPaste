@@ -1,0 +1,11 @@
+{
+    "plugins": ["prettier-plugin-blade"],
+    "printWidth": 80,
+    "singleQuote": true,
+    "bladeFormatter": {
+      "wrapAttributes": "auto",
+      "wrapLineLength": 120,
+      "endWithNewline": true
+    }
+  }
+  

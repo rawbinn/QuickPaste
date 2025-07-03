@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Models\Enums\ExpiryType;
@@ -20,4 +22,9 @@ class Paste extends Model
     protected $casts = [
         'expiry_type' => ExpiryType::class,
     ];
+
+    public function getRouteKeyName(): string
+    {
+        return 'code';
+    }
 }
